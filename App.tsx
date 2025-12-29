@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { PersonnelRecord, PersonnelStatus, WorkLog } from './types';
-import { calculateDuration, generateId } from './utils/timeHelper';
-import * as XLSX from 'https://esm.sh/xlsx';
+import { PersonnelRecord, PersonnelStatus, WorkLog } from './types.ts';
+import { calculateDuration, generateId } from './utils/timeHelper.ts';
+import * as XLSX from 'xlsx';
 
 // Helper to convert 24h to 12h Persian parts
 const parse24to12 = (time24: string) => {
@@ -145,7 +145,7 @@ const App: React.FC = () => {
   const addRow = () => {
     setCurrentRecord(prev => ({
       ...prev,
-      workLogs: [...prev.workLogs, { id: generateId(), productDescription: '', startTime: '', endTime: '' }]
+      workLogs: [...prev.workLogs, { id: generateId(), productDescription: '', startTime: '08:00', endTime: '09:00' }]
     }));
   };
 
@@ -175,23 +175,22 @@ const App: React.FC = () => {
   };
 
   const goToNext = () => {
-    if (currentIndex < records.length - 1) setCurrentIndex(prev => prev + 1);
-    else {
+    if (currentIndex < records.length - 1) {
+      setCurrentIndex(prev => prev + 1);
+    } else {
       const fresh = EmptyRecord();
       setCurrentRecord(fresh);
       setCurrentIndex(records.length);
     }
   };
 
-  const goToPrev = () => { if (currentIndex > 0) setCurrentIndex(prev => prev - 1); };
+  const goToPrev = () => { 
+    if (currentIndex > 0) {
+      setCurrentIndex(prev => prev - 1);
+    }
+  };
 
   const exportToExcel = () => {
-    if (records.length === 0 && !currentRecord.operatorCode) {
-        alert('اطلاعاتی برای خروجی وجود ندارد.');
-        return;
-    }
-
-    // Include the current (possibly unsaved) record in the export data if it has content
     const allData = [...records];
     const currentInRecords = allData.find(r => r.id === currentRecord.id);
     if (!currentInRecords && currentRecord.operatorCode) {
@@ -199,6 +198,11 @@ const App: React.FC = () => {
     } else if (currentInRecords) {
         const idx = allData.indexOf(currentInRecords);
         allData[idx] = currentRecord;
+    }
+
+    if (allData.length === 0) {
+        alert('اطلاعاتی برای خروجی وجود ندارد.');
+        return;
     }
 
     const flatData = allData.flatMap(record => 
@@ -219,25 +223,23 @@ const App: React.FC = () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "گزارش کارکرد");
     
-    // Fix for RTL in Excel
-    if (!worksheet['!ref']) return;
+    // RTL fix for worksheet
     worksheet['!dir'] = 'rtl';
 
-    XLSX.writeFile(workbook, `Factory_Report_${new Date().toLocaleDateString('fa-IR').replace(/\//g, '-')}.xlsx`);
+    XLSX.writeFile(workbook, `Factory_Report_${new Date().getTime()}.xlsx`);
   };
 
   return (
     <div className="min-h-screen p-4 md:p-8 flex justify-center items-start">
       <div className="w-full max-w-4xl bg-white shadow-xl rounded-2xl p-6 md:p-10 border-t-8 border-blue-600">
         <header className="mb-10 text-center border-b pb-6 relative">
-          <div className="absolute left-0 top-0">
+          <div className="md:absolute left-0 top-0 mb-4 md:mb-0">
             <button 
               onClick={exportToExcel}
               className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2 px-4 rounded-lg shadow transition-all active:scale-95"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="Vertical 12a2 2 0 002 2h8a2 2 0 002-2V6a2 2 0 00-2-2h-8a2 2 0 00-2 2v6z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11h3m-3 4h3m-6-4h.01M9 15h.01M9 11h.01M12 15h.01" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               خروجی اکسل
             </button>
