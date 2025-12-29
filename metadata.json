@@ -1,0 +1,5 @@
+{
+  "name": "Factory Time Tracking System",
+  "description": "A comprehensive RTL-compliant online form for factory personnel to track attendance, machine usage, and product-specific work hours with automatic duration calculations.",
+  "requestFramePermissions": []
+}
