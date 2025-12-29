@@ -14,6 +14,7 @@ export interface WorkLog {
 
 export interface PersonnelRecord {
   id: string;
+  date: string;
   operatorCode: string;
   fullName: string;
   machineCode: string;
