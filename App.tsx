@@ -1,4 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
+import DatePicker from "react-multi-date-picker";
+import persian from "react-date-object/calendars/persian";
+import persian_fa from "react-date-object/locales/persian_fa";
 import { PersonnelRecord, PersonnelStatus, WorkLog } from './types.ts';
 import { calculateDuration, generateId } from './utils/timeHelper.ts';
 import * as XLSX from 'xlsx';
@@ -51,6 +55,13 @@ const PRODUCT_OPTIONS = [
   "چسب حصیری"
 ];
 
+// Helper to convert "HH:MM" to minutes for comparison
+const timeToMinutes = (time: string) => {
+  if (!time) return 0;
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+};
+
 const parse24to12 = (time24: string) => {
   if (!time24) return { h: 8, m: 0, p: 'قبل از ظهر' };
   let [h, m] = time24.split(':').map(Number);
@@ -70,9 +81,10 @@ interface PersianTimePickerProps {
   value: string;
   onChange: (val: string) => void;
   label?: string;
+  error?: boolean;
 }
 
-const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, label }) => {
+const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, label, error }) => {
   const { h, m, p } = parse24to12(value);
   const update = (newH: number, newM: number, newP: string) => {
     onChange(format12to24(newH, newM, newP));
@@ -80,8 +92,8 @@ const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, 
 
   return (
     <div className="flex flex-col gap-1">
-      {label && <label className="text-sm font-bold text-gray-700">{label}</label>}
-      <div className="flex items-center gap-1 bg-white border-2 border-gray-200 rounded-lg p-1 focus-within:border-blue-500 transition-all">
+      {label && <label className={`text-sm font-bold ${error ? 'text-red-600' : 'text-gray-700'}`}>{label}</label>}
+      <div className={`flex items-center gap-1 bg-white border-2 rounded-lg p-1 transition-all ${error ? 'border-red-500 bg-red-50' : 'border-gray-200 focus-within:border-blue-500'}`}>
         <select value={h} onChange={(e) => update(Number(e.target.value), m, p)} className="bg-transparent outline-none text-center font-bold px-1 cursor-pointer">
           {Array.from({ length: 12 }, (_, i) => i + 1).map(num => <option key={num} value={num} className="bg-black text-white">{num}</option>)}
         </select>
@@ -100,7 +112,7 @@ const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, 
 
 const EmptyRecord = (): PersonnelRecord => ({
   id: generateId(),
-  date: new Intl.DateTimeFormat('fa-IR').format(new Date()),
+  date: new Date().toLocaleDateString('fa-IR'),
   operatorCode: '',
   fullName: '',
   machineCode: '',
@@ -117,6 +129,7 @@ const App: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [currentRecord, setCurrentRecord] = useState<PersonnelRecord>(EmptyRecord());
   const [isSaved, setIsSaved] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const saved = localStorage.getItem('factory_logs');
@@ -132,6 +145,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (records.length > 0 && currentIndex < records.length) {
       setCurrentRecord(records[currentIndex]);
+      setErrors({}); // Clear errors when switching records
     }
   }, [currentIndex, records]);
 
@@ -142,9 +156,62 @@ const App: React.FC = () => {
     }
   }, [currentRecord.entryTime, currentRecord.exitTime]);
 
+  // Validation Logic
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
+    
+    // 1. Basic Fields
+    if (!currentRecord.date.trim()) newErrors.date = "تاریخ الزامی است";
+    if (!currentRecord.operatorCode.trim()) newErrors.operatorCode = "کد اپراتور الزامی است";
+    if (!currentRecord.fullName.trim()) newErrors.fullName = "نام پرسنل نامعتبر است";
+
+    // 2. Presence Times
+    const entryMin = timeToMinutes(currentRecord.entryTime);
+    const exitMin = timeToMinutes(currentRecord.exitTime);
+
+    if (currentRecord.status === PersonnelStatus.PRESENT) {
+        if (exitMin <= entryMin) {
+            newErrors.timeRange = "ساعت خروج باید بعد از ورود باشد";
+        }
+
+        // 3. Work Logs Validation
+        currentRecord.workLogs.forEach((log, index) => {
+            const logStartMin = timeToMinutes(log.startTime);
+            const logEndMin = timeToMinutes(log.endTime);
+
+            // Empty Product
+            if (!log.productDescription) {
+                newErrors[`log_product_${log.id}`] = "محصول را انتخاب کنید";
+            }
+
+            // Logical Time Sequence
+            if (logEndMin <= logStartMin) {
+                newErrors[`log_time_${log.id}`] = "پایان باید بعد از شروع باشد";
+            }
+
+            // Within Presence Range
+            if (logStartMin < entryMin || logEndMin > exitMin) {
+                newErrors[`log_range_${log.id}`] = "باید در بازه حضور باشد";
+            }
+        });
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
+    // Clear error for this field if exists
+    if (errors[name]) {
+        setErrors(prev => {
+            const newErrs = { ...prev };
+            delete newErrs[name];
+            return newErrs;
+        });
+    }
+
     setCurrentRecord(prev => {
       const updated = { ...prev, [name]: value };
       
@@ -154,11 +221,33 @@ const App: React.FC = () => {
         if (found) {
           updated.fullName = found.name;
           updated.machineCode = found.machine;
+          // Clear fullName error if found
+           setErrors(prev => {
+                const newErrs = { ...prev };
+                delete newErrs.fullName;
+                return newErrs;
+            });
         }
       }
       return updated;
     });
     
+    setIsSaved(false);
+  };
+
+  const handleDateChange = (dateObject: any) => {
+    const dateString = dateObject ? dateObject.format("YYYY/MM/DD") : "";
+    
+    // Clear date error if exists
+    if (errors.date) {
+        setErrors(prev => {
+            const newErrs = { ...prev };
+            delete newErrs.date;
+            return newErrs;
+        });
+    }
+
+    setCurrentRecord(prev => ({ ...prev, date: dateString }));
     setIsSaved(false);
   };
 
@@ -168,6 +257,14 @@ const App: React.FC = () => {
   };
 
   const handleWorkLogChange = (id: string, field: keyof WorkLog, value: string) => {
+    // Clear related errors
+    if (field === 'productDescription' && errors[`log_product_${id}`]) {
+         setErrors(prev => { const n = {...prev}; delete n[`log_product_${id}`]; return n; });
+    }
+    if ((field === 'startTime' || field === 'endTime') && (errors[`log_time_${id}`] || errors[`log_range_${id}`])) {
+         setErrors(prev => { const n = {...prev}; delete n[`log_time_${id}`]; delete n[`log_range_${id}`]; return n; });
+    }
+
     setCurrentRecord(prev => ({
       ...prev,
       workLogs: prev.workLogs.map(log => log.id === id ? { ...log, [field]: value } : log)
@@ -183,6 +280,11 @@ const App: React.FC = () => {
   };
 
   const saveRecord = () => {
+    if (!validateForm()) {
+        alert("لطفا خطاهای موجود در فرم را برطرف کنید.");
+        return;
+    }
+
     const newRecords = [...records];
     const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
     if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
@@ -194,6 +296,8 @@ const App: React.FC = () => {
   };
 
   const deleteRecord = () => {
+    if (!window.confirm("آیا از حذف این رکورد اطمینان دارید؟")) return;
+    
     const newRecords = records.filter(r => r.id !== currentRecord.id);
     setRecords(newRecords);
     localStorage.setItem('factory_logs', JSON.stringify(newRecords));
@@ -208,6 +312,19 @@ const App: React.FC = () => {
   };
 
   const goToNext = () => {
+    if (!validateForm() && currentIndex === records.length) { 
+        alert("لطفا اطلاعات را تکمیل کنید.");
+        return;
+    }
+    
+    // Auto-save if valid
+    const newRecords = [...records];
+    const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
+    if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
+    else newRecords.push(currentRecord);
+    setRecords(newRecords);
+    localStorage.setItem('factory_logs', JSON.stringify(newRecords));
+
     if (currentIndex < records.length - 1) {
       setCurrentIndex(prev => prev + 1);
     } else {
@@ -279,35 +396,39 @@ const App: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-bold text-gray-700">تاریخ</label>
-            <input 
-              name="date" 
-              value={currentRecord.date || ''} 
-              onChange={handleInputChange} 
-              type="text" 
-              className="border-2 border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900" 
-              placeholder="1403/01/01" 
+            <label className="text-sm font-bold text-gray-700">تاریخ <span className="text-red-500">*</span></label>
+            <DatePicker
+              value={currentRecord.date}
+              onChange={handleDateChange}
+              calendar={persian}
+              locale={persian_fa}
+              calendarPosition="bottom-right"
+              format="YYYY/MM/DD"
+              inputClass={`w-full border-2 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900 ${errors.date ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}
+              placeholder="1403/01/01"
             />
+            {errors.date && <span className="text-red-500 text-xs">{errors.date}</span>}
           </div>
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-bold text-gray-700">کد اپراتور (کد تولید)</label>
+            <label className="text-sm font-bold text-gray-700">کد اپراتور <span className="text-red-500">*</span></label>
             <input 
               name="operatorCode" 
               value={currentRecord.operatorCode} 
               onChange={handleInputChange} 
               type="text" 
-              className="border-2 border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900" 
+              className={`border-2 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900 ${errors.operatorCode ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}
               placeholder="مثلاً ۷ یا ۱۴" 
             />
+            {errors.operatorCode && <span className="text-red-500 text-xs">{errors.operatorCode}</span>}
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-sm font-bold text-gray-700">نام و نام خانوادگی</label>
             <input 
               name="fullName" 
               value={currentRecord.fullName} 
-              onChange={handleInputChange} 
+              readOnly
               type="text" 
-              className="border-2 border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900" 
+              className={`border-2 rounded-lg p-2 outline-none transition-all text-gray-900 ${errors.fullName ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-gray-50'}`}
               placeholder="تکمیل خودکار" 
             />
           </div>
@@ -316,9 +437,9 @@ const App: React.FC = () => {
             <input 
               name="machineCode" 
               value={currentRecord.machineCode} 
-              onChange={handleInputChange} 
+              readOnly
               type="text" 
-              className="border-2 border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white text-gray-900" 
+              className="border-2 border-gray-200 rounded-lg p-2 outline-none transition-all bg-gray-50 text-gray-900" 
               placeholder="تکمیل خودکار" 
             />
           </div>
@@ -342,6 +463,7 @@ const App: React.FC = () => {
               label="ساعت حضور از:" 
               value={currentRecord.entryTime} 
               onChange={(val) => handleInputChange({ target: { name: 'entryTime', value: val } } as any)} 
+              error={!!errors.timeRange}
             />
           </div>
           <div className="md:col-span-1">
@@ -349,13 +471,15 @@ const App: React.FC = () => {
               label="تا ساعت:" 
               value={currentRecord.exitTime} 
               onChange={(val) => handleInputChange({ target: { name: 'exitTime', value: val } } as any)} 
+              error={!!errors.timeRange}
             />
           </div>
           <div className="flex flex-col gap-2 md:col-span-2">
             <label className="text-sm font-bold text-gray-700">میزان حضور کل</label>
-            <div className="bg-white border-2 border-gray-200 rounded-lg py-2.5 text-center font-bold text-gray-900 text-lg">
+            <div className={`bg-white border-2 rounded-lg py-2.5 text-center font-bold text-gray-900 text-lg ${errors.timeRange ? 'border-red-500 text-red-600' : 'border-gray-200'}`}>
               {currentRecord.totalPresence}
             </div>
+            {errors.timeRange && <span className="text-red-500 text-xs text-center">{errors.timeRange}</span>}
           </div>
         </div>
 
@@ -371,13 +495,13 @@ const App: React.FC = () => {
             </thead>
             <tbody>
               {currentRecord.workLogs.map((log, index) => (
-                <tr key={log.id} className="border-b hover:bg-gray-50 transition-colors">
+                <tr key={log.id} className={`border-b hover:bg-gray-50 transition-colors ${errors[`log_range_${log.id}`] ? 'bg-red-50' : ''}`}>
                   <td className="p-3 text-center text-gray-500 font-medium">{index + 1}</td>
                   <td className="p-2">
                     <select
                       value={log.productDescription}
                       onChange={(e) => handleWorkLogChange(log.id, 'productDescription', e.target.value)}
-                      className="w-full p-2 outline-none bg-transparent cursor-pointer text-gray-900"
+                      className={`w-full p-2 outline-none bg-transparent cursor-pointer text-gray-900 border-b ${errors[`log_product_${log.id}`] ? 'border-red-500 bg-red-100' : 'border-transparent'}`}
                     >
                       <option value="" disabled className="text-gray-400">انتخاب کنید...</option>
                       {PRODUCT_OPTIONS.map((opt) => (
@@ -386,12 +510,27 @@ const App: React.FC = () => {
                         </option>
                       ))}
                     </select>
+                     {errors[`log_product_${log.id}`] && <span className="text-red-500 text-[10px] block mt-1">{errors[`log_product_${log.id}`]}</span>}
                   </td>
                   <td className="p-2">
-                    <PersianTimePicker value={log.startTime} onChange={(val) => handleWorkLogChange(log.id, 'startTime', val)} />
+                    <PersianTimePicker 
+                        value={log.startTime} 
+                        onChange={(val) => handleWorkLogChange(log.id, 'startTime', val)} 
+                        error={!!errors[`log_time_${log.id}`] || !!errors[`log_range_${log.id}`]}
+                    />
                   </td>
                   <td className="p-2">
-                    <PersianTimePicker value={log.endTime} onChange={(val) => handleWorkLogChange(log.id, 'endTime', val)} />
+                    <PersianTimePicker 
+                        value={log.endTime} 
+                        onChange={(val) => handleWorkLogChange(log.id, 'endTime', val)} 
+                        error={!!errors[`log_time_${log.id}`] || !!errors[`log_range_${log.id}`]}
+                    />
+                    {(errors[`log_time_${log.id}`] || errors[`log_range_${log.id}`]) && (
+                        <div className="text-red-500 text-[10px] text-center mt-1">
+                            {errors[`log_time_${log.id}`]}
+                            {errors[`log_range_${log.id}`]}
+                        </div>
+                    )}
                   </td>
                 </tr>
               ))}
