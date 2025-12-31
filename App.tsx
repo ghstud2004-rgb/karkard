@@ -5,6 +5,7 @@ import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
 import { PersonnelRecord, PersonnelStatus, WorkLog } from './types.ts';
 import { calculateDuration, generateId } from './utils/timeHelper.ts';
+import { api } from './services/api.ts'; // ایمپورت سرویس جدید
 import * as XLSX from 'xlsx';
 
 // لیست پرسنل و دستگاه‌ها جهت جستجوی خودکار (Lookup Table)
@@ -129,23 +130,32 @@ const App: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [currentRecord, setCurrentRecord] = useState<PersonnelRecord>(EmptyRecord());
   const [isSaved, setIsSaved] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // حالت بارگذاری
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // لود اولیه داده‌ها از طریق API
   useEffect(() => {
-    const saved = localStorage.getItem('factory_logs');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.length > 0) {
-        setRecords(parsed);
-        setCurrentRecord(parsed[0]);
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        const data = await api.getAllRecords();
+        if (data.length > 0) {
+          setRecords(data);
+          setCurrentRecord(data[0]);
+        }
+      } catch (e) {
+        console.error("خطا در بارگذاری داده‌ها", e);
+      } finally {
+        setIsLoading(false);
       }
-    }
+    };
+    fetchData();
   }, []);
 
   useEffect(() => {
     if (records.length > 0 && currentIndex < records.length) {
       setCurrentRecord(records[currentIndex]);
-      setErrors({}); // Clear errors when switching records
+      setErrors({}); 
     }
   }, [currentIndex, records]);
 
@@ -203,7 +213,6 @@ const App: React.FC = () => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Clear error for this field if exists
     if (errors[name]) {
         setErrors(prev => {
             const newErrs = { ...prev };
@@ -215,13 +224,11 @@ const App: React.FC = () => {
     setCurrentRecord(prev => {
       const updated = { ...prev, [name]: value };
       
-      // منطق جستجو: اگر کد اپراتور تغییر کرد، اطلاعات را از جدول مرجع پیدا کن
       if (name === 'operatorCode') {
         const found = PERSONNEL_DATA.find(p => p.code === value.trim());
         if (found) {
           updated.fullName = found.name;
           updated.machineCode = found.machine;
-          // Clear fullName error if found
            setErrors(prev => {
                 const newErrs = { ...prev };
                 delete newErrs.fullName;
@@ -237,8 +244,6 @@ const App: React.FC = () => {
 
   const handleDateChange = (dateObject: any) => {
     const dateString = dateObject ? dateObject.format("YYYY/MM/DD") : "";
-    
-    // Clear date error if exists
     if (errors.date) {
         setErrors(prev => {
             const newErrs = { ...prev };
@@ -246,7 +251,6 @@ const App: React.FC = () => {
             return newErrs;
         });
     }
-
     setCurrentRecord(prev => ({ ...prev, date: dateString }));
     setIsSaved(false);
   };
@@ -257,7 +261,6 @@ const App: React.FC = () => {
   };
 
   const handleWorkLogChange = (id: string, field: keyof WorkLog, value: string) => {
-    // Clear related errors
     if (field === 'productDescription' && errors[`log_product_${id}`]) {
          setErrors(prev => { const n = {...prev}; delete n[`log_product_${id}`]; return n; });
     }
@@ -279,58 +282,84 @@ const App: React.FC = () => {
     }));
   };
 
-  const saveRecord = () => {
+  // عملیات ذخیره با API
+  const saveRecord = async () => {
     if (!validateForm()) {
         alert("لطفا خطاهای موجود در فرم را برطرف کنید.");
         return;
     }
+    setIsLoading(true);
+    try {
+        await api.saveRecord(currentRecord);
+        
+        // آپدیت استیت محلی
+        const newRecords = [...records];
+        const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
+        if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
+        else newRecords.push(currentRecord);
+        setRecords(newRecords);
 
-    const newRecords = [...records];
-    const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
-    if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
-    else newRecords.push(currentRecord);
-    setRecords(newRecords);
-    localStorage.setItem('factory_logs', JSON.stringify(newRecords));
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2000);
-  };
-
-  const deleteRecord = () => {
-    if (!window.confirm("آیا از حذف این رکورد اطمینان دارید؟")) return;
-    
-    const newRecords = records.filter(r => r.id !== currentRecord.id);
-    setRecords(newRecords);
-    localStorage.setItem('factory_logs', JSON.stringify(newRecords));
-    if (newRecords.length > 0) {
-      const nextIdx = Math.max(0, currentIndex - 1);
-      setCurrentIndex(nextIdx);
-      setCurrentRecord(newRecords[nextIdx]);
-    } else {
-      setCurrentRecord(EmptyRecord());
-      setCurrentIndex(0);
+        setIsSaved(true);
+        setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+        alert("خطا در اتصال به دیتابیس");
+    } finally {
+        setIsLoading(false);
     }
   };
 
-  const goToNext = () => {
+  // عملیات حذف با API
+  const deleteRecord = async () => {
+    if (!window.confirm("آیا از حذف این رکورد اطمینان دارید؟")) return;
+    setIsLoading(true);
+    try {
+        await api.deleteRecord(currentRecord.id);
+        
+        const newRecords = records.filter(r => r.id !== currentRecord.id);
+        setRecords(newRecords);
+        if (newRecords.length > 0) {
+            const nextIdx = Math.max(0, currentIndex - 1);
+            setCurrentIndex(nextIdx);
+            setCurrentRecord(newRecords[nextIdx]);
+        } else {
+            setCurrentRecord(EmptyRecord());
+            setCurrentIndex(0);
+        }
+    } catch (error) {
+        alert("خطا در حذف رکورد");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  const goToNext = async () => {
     if (!validateForm() && currentIndex === records.length) { 
         alert("لطفا اطلاعات را تکمیل کنید.");
         return;
     }
     
-    // Auto-save if valid
-    const newRecords = [...records];
-    const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
-    if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
-    else newRecords.push(currentRecord);
-    setRecords(newRecords);
-    localStorage.setItem('factory_logs', JSON.stringify(newRecords));
+    // Auto-save via API logic when moving next
+    setIsLoading(true);
+    try {
+        await api.saveRecord(currentRecord);
+        
+        const newRecords = [...records];
+        const existingIndex = newRecords.findIndex(r => r.id === currentRecord.id);
+        if (existingIndex > -1) newRecords[existingIndex] = currentRecord;
+        else newRecords.push(currentRecord);
+        setRecords(newRecords);
 
-    if (currentIndex < records.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-    } else {
-      const fresh = EmptyRecord();
-      setCurrentRecord(fresh);
-      setCurrentIndex(records.length);
+        if (currentIndex < records.length - 1) {
+            setCurrentIndex(prev => prev + 1);
+        } else {
+            const fresh = EmptyRecord();
+            setCurrentRecord(fresh);
+            setCurrentIndex(records.length);
+        }
+    } catch (error) {
+        alert("خطا در ذخیره سازی خودکار");
+    } finally {
+        setIsLoading(false);
     }
   };
 
@@ -376,7 +405,17 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen p-4 md:p-8 flex justify-center items-start">
+    <div className="min-h-screen p-4 md:p-8 flex justify-center items-start relative">
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 z-50 flex items-center justify-center backdrop-blur-sm">
+            <div className="bg-white p-6 rounded-xl shadow-2xl flex flex-col items-center gap-4">
+                <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <span className="font-bold text-gray-700">در حال ارتباط با سرور...</span>
+            </div>
+        </div>
+      )}
+
       <div className="w-full max-w-4xl bg-white shadow-xl rounded-2xl p-6 md:p-10 border-t-8 border-blue-600">
         <header className="mb-10 text-center border-b pb-6 relative">
           <div className="md:absolute left-0 top-0 mb-4 md:mb-0">
@@ -491,6 +530,7 @@ const App: React.FC = () => {
                 <th className="p-3 text-right">شرح محصول</th>
                 <th className="p-3 text-center w-40">ساعت شروع</th>
                 <th className="p-3 text-center w-40">ساعت پایان</th>
+                <th className="p-3 text-center w-32">میزان حضور</th>
               </tr>
             </thead>
             <tbody>
@@ -532,6 +572,9 @@ const App: React.FC = () => {
                         </div>
                     )}
                   </td>
+                  <td className="p-2 text-center font-bold text-gray-700 bg-gray-50">
+                    {calculateDuration(log.startTime, log.endTime)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -543,12 +586,12 @@ const App: React.FC = () => {
 
         <div className="flex flex-wrap gap-4 justify-between items-center mt-12 border-t pt-8">
           <div className="flex gap-3 order-2 md:order-1 w-full md:w-auto">
-            <button onClick={goToPrev} disabled={currentIndex === 0} className="flex-1 md:flex-none px-6 py-2 rounded-xl border-2 border-gray-300 font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-30 transition-all">نفر قبلی</button>
-            <button onClick={goToNext} className="flex-1 md:flex-none px-6 py-2 rounded-xl border-2 border-blue-600 font-bold text-blue-600 hover:bg-blue-50 transition-all">نفر بعدی / جدید</button>
+            <button onClick={goToPrev} disabled={currentIndex === 0 || isLoading} className="flex-1 md:flex-none px-6 py-2 rounded-xl border-2 border-gray-300 font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-30 transition-all">نفر قبلی</button>
+            <button onClick={goToNext} disabled={isLoading} className="flex-1 md:flex-none px-6 py-2 rounded-xl border-2 border-blue-600 font-bold text-blue-600 hover:bg-blue-50 transition-all disabled:opacity-50">نفر بعدی / جدید</button>
           </div>
           <div className="flex gap-3 order-1 md:order-2 w-full md:w-auto">
-             <button onClick={deleteRecord} className="flex-1 md:flex-none px-8 py-3 rounded-xl bg-red-50 text-red-600 font-bold hover:bg-red-100 transition-all border border-red-200">حذف رکورد</button>
-            <button onClick={saveRecord} className={`flex-1 md:flex-none px-12 py-3 rounded-xl font-bold text-white shadow-lg transition-all transform hover:scale-105 active:scale-95 ${isSaved ? 'bg-green-500' : 'bg-blue-600 hover:bg-blue-700'}`}>
+             <button onClick={deleteRecord} disabled={isLoading} className="flex-1 md:flex-none px-8 py-3 rounded-xl bg-red-50 text-red-600 font-bold hover:bg-red-100 transition-all border border-red-200 disabled:opacity-50">حذف رکورد</button>
+            <button onClick={saveRecord} disabled={isLoading} className={`flex-1 md:flex-none px-12 py-3 rounded-xl font-bold text-white shadow-lg transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:scale-100 ${isSaved ? 'bg-green-500' : 'bg-blue-600 hover:bg-blue-700'}`}>
               {isSaved ? '✓ ثبت شد' : 'ثبت و ذخیره نهایی'}
             </button>
           </div>
