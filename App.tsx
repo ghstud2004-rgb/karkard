@@ -83,28 +83,30 @@ interface PersianTimePickerProps {
   onChange: (val: string) => void;
   label?: string;
   error?: boolean;
+  disabled?: boolean;
 }
 
-const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, label, error }) => {
+const PersianTimePicker: React.FC<PersianTimePickerProps> = ({ value, onChange, label, error, disabled }) => {
   const { h, m, p } = parse24to12(value);
   const update = (newH: number, newM: number, newP: string) => {
+    if (disabled) return;
     onChange(format12to24(newH, newM, newP));
   };
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className={`flex flex-col gap-1 ${disabled ? 'opacity-50' : ''}`}>
       {label && <label className={`text-sm font-bold ${error ? 'text-red-600' : 'text-gray-700'}`}>{label}</label>}
-      <div className={`flex items-center gap-1 bg-white border-2 rounded-lg p-1 transition-all ${error ? 'border-red-500 bg-red-50' : 'border-gray-200 focus-within:border-blue-500'}`}>
-        <select value={h} onChange={(e) => update(Number(e.target.value), m, p)} className="bg-transparent outline-none text-center font-bold px-1 cursor-pointer">
+      <div className={`flex items-center gap-1 bg-white border-2 rounded-lg p-1 transition-all ${error ? 'border-red-500 bg-red-50' : 'border-gray-200 focus-within:border-blue-500'} ${disabled ? 'bg-gray-100 cursor-not-allowed' : ''}`}>
+        <select disabled={disabled} value={h} onChange={(e) => update(Number(e.target.value), m, p)} className="bg-transparent outline-none text-center font-bold px-1 cursor-pointer disabled:cursor-not-allowed">
           {Array.from({ length: 12 }, (_, i) => i + 1).map(num => <option key={num} value={num} className="bg-black text-white">{num}</option>)}
         </select>
         <span className="font-bold">:</span>
-        <select value={m} onChange={(e) => update(h, Number(e.target.value), p)} className="bg-transparent outline-none text-center font-bold px-1 cursor-pointer">
+        <select disabled={disabled} value={m} onChange={(e) => update(h, Number(e.target.value), p)} className="bg-transparent outline-none text-center font-bold px-1 cursor-pointer disabled:cursor-not-allowed">
           {Array.from({ length: 60 }, (_, i) => i).map(num => <option key={num} value={num} className="bg-black text-white">{String(num).padStart(2, '0')}</option>)}
         </select>
         <div className="flex bg-gray-100 rounded-md p-0.5 mr-2">
-          <button type="button" onClick={() => update(h, m, 'قبل از ظهر')} className={`px-2 py-1 text-[10px] rounded ${p === 'قبل از ظهر' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-400'}`}>ق.ظ</button>
-          <button type="button" onClick={() => update(h, m, 'بعد از ظهر')} className={`px-2 py-1 text-[10px] rounded ${p === 'بعد از ظهر' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-400'}`}>ب.ظ</button>
+          <button type="button" disabled={disabled} onClick={() => update(h, m, 'قبل از ظهر')} className={`px-2 py-1 text-[10px] rounded ${p === 'قبل از ظهر' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-400'} disabled:cursor-not-allowed`}>ق.ظ</button>
+          <button type="button" disabled={disabled} onClick={() => update(h, m, 'بعد از ظهر')} className={`px-2 py-1 text-[10px] rounded ${p === 'بعد از ظهر' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-gray-400'} disabled:cursor-not-allowed`}>ب.ظ</button>
         </div>
       </div>
     </div>
@@ -165,6 +167,8 @@ const App: React.FC = () => {
       setCurrentRecord(prev => ({ ...prev, totalPresence: duration }));
     }
   }, [currentRecord.entryTime, currentRecord.exitTime]);
+
+  const isAbsent = currentRecord.status !== PersonnelStatus.PRESENT;
 
   // Validation Logic
   const validateForm = () => {
@@ -505,13 +509,14 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10 items-end">
+        <div className={`grid grid-cols-1 md:grid-cols-4 gap-6 mb-10 items-end transition-opacity duration-300 ${isAbsent ? 'opacity-40 grayscale pointer-events-none select-none' : ''}`}>
           <div className="md:col-span-1">
             <PersianTimePicker 
               label="ساعت حضور از:" 
               value={currentRecord.entryTime} 
               onChange={(val) => handleInputChange({ target: { name: 'entryTime', value: val } } as any)} 
               error={!!errors.timeRange}
+              disabled={isAbsent}
             />
           </div>
           <div className="md:col-span-1">
@@ -520,6 +525,7 @@ const App: React.FC = () => {
               value={currentRecord.exitTime} 
               onChange={(val) => handleInputChange({ target: { name: 'exitTime', value: val } } as any)} 
               error={!!errors.timeRange}
+              disabled={isAbsent}
             />
           </div>
           <div className="flex flex-col gap-2 md:col-span-2">
@@ -531,7 +537,7 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto mb-8 bg-white rounded-xl shadow-sm border border-gray-100">
+        <div className={`overflow-x-auto mb-8 bg-white rounded-xl shadow-sm border border-gray-100 transition-opacity duration-300 ${isAbsent ? 'opacity-40 grayscale pointer-events-none select-none' : ''}`}>
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-gray-800 text-white">
@@ -550,7 +556,8 @@ const App: React.FC = () => {
                     <select
                       value={log.productDescription}
                       onChange={(e) => handleWorkLogChange(log.id, 'productDescription', e.target.value)}
-                      className={`w-full p-2 outline-none bg-transparent cursor-pointer text-gray-900 border-b ${errors[`log_product_${log.id}`] ? 'border-red-500 bg-red-100' : 'border-transparent'}`}
+                      disabled={isAbsent}
+                      className={`w-full p-2 outline-none bg-transparent cursor-pointer text-gray-900 border-b ${errors[`log_product_${log.id}`] ? 'border-red-500 bg-red-100' : 'border-transparent'} disabled:cursor-not-allowed`}
                     >
                       <option value="" disabled className="text-gray-400">انتخاب کنید...</option>
                       {PRODUCT_OPTIONS.map((opt) => (
@@ -566,6 +573,7 @@ const App: React.FC = () => {
                         value={log.startTime} 
                         onChange={(val) => handleWorkLogChange(log.id, 'startTime', val)} 
                         error={!!errors[`log_time_${log.id}`] || !!errors[`log_range_${log.id}`]}
+                        disabled={isAbsent}
                     />
                   </td>
                   <td className="p-2">
@@ -573,6 +581,7 @@ const App: React.FC = () => {
                         value={log.endTime} 
                         onChange={(val) => handleWorkLogChange(log.id, 'endTime', val)} 
                         error={!!errors[`log_time_${log.id}`] || !!errors[`log_range_${log.id}`]}
+                        disabled={isAbsent}
                     />
                     {(errors[`log_time_${log.id}`] || errors[`log_range_${log.id}`]) && (
                         <div className="text-red-500 text-[10px] text-center mt-1">
@@ -588,7 +597,7 @@ const App: React.FC = () => {
               ))}
             </tbody>
           </table>
-          <button onClick={addRow} className="w-full py-3 bg-gray-50 text-blue-600 hover:bg-blue-50 text-sm font-bold flex justify-center items-center gap-2 transition-all border-t">
+          <button onClick={addRow} disabled={isAbsent} className="w-full py-3 bg-gray-50 text-blue-600 hover:bg-blue-50 text-sm font-bold flex justify-center items-center gap-2 transition-all border-t disabled:text-gray-400 disabled:cursor-not-allowed">
             <span className="text-lg">+</span> افزودن ردیف کارکرد جدید
           </button>
         </div>
