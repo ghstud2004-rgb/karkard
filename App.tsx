@@ -225,7 +225,12 @@ const App: React.FC = () => {
       const updated = { ...prev, [name]: value };
       
       if (name === 'operatorCode') {
-        const found = PERSONNEL_DATA.find(p => p.code === value.trim());
+        // تبدیل اعداد فارسی به انگلیسی برای جستجو
+        const normalize = (str: string) => str.replace(/[۰-۹]/g, w => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(w)])
+                                            .replace(/[٠-٩]/g, w => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(w)]);
+        const normalizedCode = normalize(value.trim());
+        
+        const found = PERSONNEL_DATA.find(p => p.code === normalizedCode);
         if (found) {
           updated.fullName = found.name;
           updated.machineCode = found.machine;
@@ -234,6 +239,10 @@ const App: React.FC = () => {
                 delete newErrs.fullName;
                 return newErrs;
             });
+        } else {
+            // اگر کد پیدا نشد، نام و کد دستگاه را خالی کن
+            updated.fullName = '';
+            updated.machineCode = '';
         }
       }
       return updated;
