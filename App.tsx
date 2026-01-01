@@ -188,6 +188,8 @@ const App: React.FC = () => {
             newErrors.timeRange = "ساعت خروج باید بعد از ورود باشد";
         }
 
+        let totalLogMinutes = 0;
+
         // 3. Work Logs Validation
         currentRecord.workLogs.forEach((log, index) => {
             const logStartMin = timeToMinutes(log.startTime);
@@ -207,7 +209,23 @@ const App: React.FC = () => {
             if (logStartMin < entryMin || logEndMin > exitMin) {
                 newErrors[`log_range_${log.id}`] = "باید در بازه حضور باشد";
             }
+
+            // Calculate duration for validation check (only if log times are somewhat valid)
+            const duration = calculateDuration(log.startTime, log.endTime);
+            totalLogMinutes += timeToMinutes(duration);
         });
+
+        // 4. Total Duration Mismatch Validation
+        const totalPresenceMinutes = timeToMinutes(currentRecord.totalPresence);
+        
+        // Check if sum of logs equals total presence (exact match)
+        if (totalLogMinutes !== totalPresenceMinutes) {
+             const h = Math.floor(totalLogMinutes / 60);
+             const m = totalLogMinutes % 60;
+             const calculatedSum = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+             
+             newErrors.durationMismatch = `مجموع ساعات کاری وارد شده (${calculatedSum}) با میزان حضور کل (${currentRecord.totalPresence}) برابر نیست.`;
+        }
     }
 
     setErrors(newErrors);
@@ -280,6 +298,9 @@ const App: React.FC = () => {
     if ((field === 'startTime' || field === 'endTime') && (errors[`log_time_${id}`] || errors[`log_range_${id}`])) {
          setErrors(prev => { const n = {...prev}; delete n[`log_time_${id}`]; delete n[`log_range_${id}`]; return n; });
     }
+    if (errors.durationMismatch) {
+        setErrors(prev => { const n = {...prev}; delete n.durationMismatch; return n; });
+    }
 
     setCurrentRecord(prev => ({
       ...prev,
@@ -306,6 +327,7 @@ const App: React.FC = () => {
         delete newErrors[`log_product_${id}`];
         delete newErrors[`log_time_${id}`];
         delete newErrors[`log_range_${id}`];
+        delete newErrors.durationMismatch;
         return newErrors;
     });
     setIsSaved(false);
@@ -411,8 +433,18 @@ const App: React.FC = () => {
         return;
     }
 
-    const flatData = allData.flatMap(record => 
-        record.workLogs.map(log => ({
+    const flatData = allData.flatMap(record => {
+        // محاسبه مجموع دقایق کارکرد در جدول برای هر رکورد
+        const totalLogMinutes = record.workLogs.reduce((acc, log) => {
+            const duration = calculateDuration(log.startTime, log.endTime);
+            return acc + timeToMinutes(duration);
+        }, 0);
+        
+        const h = Math.floor(totalLogMinutes / 60);
+        const m = totalLogMinutes % 60;
+        const totalWorkSum = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+        return record.workLogs.map(log => ({
             'تاریخ': record.date || '',
             'کد اپراتور': record.operatorCode,
             'نام و نام خانوادگی': record.fullName,
@@ -420,11 +452,14 @@ const App: React.FC = () => {
             'وضعیت': record.status,
             'ساعت ورود': record.entryTime,
             'ساعت خروج': record.exitTime,
+            'میزان حضور کل': record.totalPresence,
+            'مجموع کارکرد در جدول': totalWorkSum,
             'نام محصول': log.productDescription,
             'شروع کار': log.startTime,
-            'پایان کار': log.endTime
-        }))
-    );
+            'پایان کار': log.endTime,
+            'مدت این ردیف': calculateDuration(log.startTime, log.endTime)
+        }));
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(flatData);
     const workbook = XLSX.utils.book_new();
@@ -631,6 +666,20 @@ const App: React.FC = () => {
             <span className="text-lg">+</span> افزودن ردیف کارکرد جدید
           </button>
         </div>
+
+        {errors.durationMismatch && (
+            <div className="mb-8 bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-center gap-4 animate-pulse">
+                <div className="bg-red-100 p-2 rounded-full text-red-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+                <div>
+                    <h4 className="font-bold text-red-800 text-sm md:text-base">خطای محاسباتی زمان</h4>
+                    <p className="text-red-600 text-xs md:text-sm mt-1">{errors.durationMismatch}</p>
+                </div>
+            </div>
+        )}
 
         <div className="flex flex-wrap gap-4 justify-between items-center mt-12 border-t pt-8">
           <div className="flex gap-3 order-2 md:order-1 w-full md:w-auto">
